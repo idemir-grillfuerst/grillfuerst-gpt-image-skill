@@ -16,7 +16,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { constants as fsConstants, existsSync } from "node:fs";
+import { constants as fsConstants, existsSync, readdirSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -270,7 +270,32 @@ function resolveWindowsCodexInvocation() {
     }
   }
 
-  return null;
+  return resolveCodexDesktopBundledInvocation();
+}
+
+// Local refinement: the Codex desktop app ships codex.exe outside PATH under
+// %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\ (the hash changes on updates).
+// CODEX_BIN can pin an explicit path; otherwise use the newest bundled build.
+function resolveCodexDesktopBundledInvocation() {
+  const explicit = process.env.CODEX_BIN;
+  if (explicit && existsSync(explicit)) {
+    return { command: explicit, prefix: [], source: "windows-codex-bin-env" };
+  }
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) return null;
+  const binRoot = path.join(localAppData, "OpenAI", "Codex", "bin");
+  if (!existsSync(binRoot)) return null;
+  let newest = null;
+  for (const entry of readdirSync(binRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(binRoot, entry.name, "codex.exe");
+    if (!existsSync(candidate)) continue;
+    const mtime = statSync(candidate).mtimeMs;
+    if (!newest || mtime > newest.mtime) newest = { candidate, mtime };
+  }
+  return newest
+    ? { command: newest.candidate, prefix: [], source: "windows-codex-desktop" }
+    : null;
 }
 
 function resolveCodexInvocation() {
@@ -930,6 +955,29 @@ function orchestratorAttempt(options) {
   };
 }
 
+// Local refinement: on native Windows the sandboxed Codex turn can finish with the
+// image saved only under <CODEX_HOME>/generated_images and report that path instead
+// of copying it into the workspace. Recover only from that directory, only a real
+// PNG, and never overwrite an existing output.
+async function recoverCodexGeneratedImage(text, output) {
+  const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const generatedRoot = path.resolve(codexHome, "generated_images") + path.sep;
+  const matches = String(text).match(/[A-Za-z]:[\\/][^\s"'`<>|*?\r\n]+?\.png|\/[^\s"'`<>|*?\r\n]+?\.png/gi) || [];
+  for (const raw of [...matches].reverse()) {
+    const candidate = path.resolve(raw.replace(/\\\\/g, "\\"));
+    if (!candidate.toLowerCase().startsWith(generatedRoot.toLowerCase())) continue;
+    if (!(await exists(candidate))) continue;
+    const bytes = await readFile(candidate);
+    const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (bytes.length < 8 || !bytes.subarray(0, 8).equals(pngSignature)) continue;
+    if (await exists(output)) return false;
+    await mkdir(path.dirname(output), { recursive: true });
+    await writeFile(output, bytes, { flag: "wx" });
+    return true;
+  }
+  return false;
+}
+
 function buildCodexImageArgs(options, finalMessage, attempt) {
   const codexArgs = [
     "exec",
@@ -1005,6 +1053,10 @@ async function generateWithSubscription(options, auth) {
       throw new CliError(
         `Codex subscription image generation failed with exit code ${result.code}.\n${tail(`${result.stderr}\n${result.stdout}`)}`,
       );
+    }
+    if (!(await exists(options.output))) {
+      const finalText = await readFile(finalMessage, "utf8").catch(() => "");
+      await recoverCodexGeneratedImage(`${finalText}\n${result.stdout}`, options.output);
     }
     if (!(await exists(options.output))) {
       const finalText = await readFile(finalMessage, "utf8").catch(() => "");

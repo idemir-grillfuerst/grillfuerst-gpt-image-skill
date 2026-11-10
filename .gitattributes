@@ -1,0 +1,7 @@
+# Keep LF on every platform. validate_skill.mjs matches the runner source with
+# "\n"-based regexes, which fail on Windows checkouts converted to CRLF.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
