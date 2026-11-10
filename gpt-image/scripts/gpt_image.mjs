@@ -20,6 +20,13 @@ import { constants as fsConstants, existsSync, readdirSync, statSync } from "nod
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  aspectFormatSentence,
+  cropPngToAspect,
+  evaluateAspect,
+  jpegDimensions,
+  resolveAspect,
+} from "./aspect.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SKILL_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
@@ -138,6 +145,11 @@ Plan and generate options:
   --exact-text TEXT       Exact in-image text, capitalization preserved. Repeatable.
   --quality TEXT          Prompt instruction, e.g. draft or final.
   --size TEXT             Prompt instruction, e.g. square or 1536x1024.
+  --aspect VALUE          Output format: W:H (16:9), WxH pixels, square, portrait,
+                          landscape, or none. Default: detected from the prompt, or
+                          the edit target format for edits. Enforced after saving.
+  --aspect-fit MODE       crop (default): center-crop small misses to the exact ratio
+                          and keep the original; report: only measure and report.
   --background TEXT       Explicit output constraint, e.g. transparent or opaque.
   --orchestrator-model M  auto, account-default, or a current Codex model ID. Default: auto.
   --orchestrator-effort E Codex reasoning level. Auto policy default: low.
@@ -575,10 +587,13 @@ async function inspectInputImage(raw, workspace, label) {
     throw new CliError(`${label} is not a recognized PNG, JPEG, or WebP image: ${input}`, 2);
   }
   const png = format === "png" ? inspectPng(bytes) : null;
+  const size = png || (format === "jpeg" ? jpegDimensions(bytes) : null);
   return {
     path: input,
     format,
-    dimensions: png ? `${png.width}x${png.height}` : null,
+    dimensions: size ? `${size.width}x${size.height}` : null,
+    width: size?.width ?? null,
+    height: size?.height ?? null,
   };
 }
 
@@ -751,6 +766,8 @@ function assertKnownImageOptions(args) {
     "region",
     "quality",
     "size",
+    "aspect",
+    "aspect-fit",
     "background",
     "orchestrator-model",
     "orchestrator-effort",
@@ -877,10 +894,26 @@ async function normalizeGenerateOptions(args) {
     region: String(args.region || "").trim() || null,
     requestedMode,
     size: String(args.size || "auto"),
+    aspect: resolveAspectOption(args, prompt, mode, editTarget),
+    aspectFit: resolveAspectFit(args),
     timeoutMs: timeoutSeconds * 1000,
     verbose: Boolean(args.verbose),
     workspace,
   };
+}
+
+function resolveAspectOption(args, prompt, mode, editTarget) {
+  try {
+    return resolveAspect({ aspect: args.aspect, size: args.size, prompt, mode, editTarget });
+  } catch (error) {
+    throw new CliError(error.message, 2);
+  }
+}
+
+function resolveAspectFit(args) {
+  const value = String(args["aspect-fit"] || "crop").toLowerCase();
+  if (!["crop", "report"].includes(value)) throw new CliError("--aspect-fit must be crop or report.", 2);
+  return value;
 }
 
 function buildBridgePrompt(options) {
@@ -918,6 +951,7 @@ function buildBridgePrompt(options) {
   if (options.size !== "auto") routing.push(`User-supplied size/aspect: ${options.size}`);
   if (options.quality !== "auto") routing.push(`User-supplied quality: ${options.quality}`);
   if (options.background !== "auto") routing.push(`User-supplied background: ${options.background}`);
+  const aspectSentence = aspectFormatSentence(options.aspect);
 
   return `Use $imagegen exactly once through Codex's built-in image generation capability.
 
@@ -925,14 +959,19 @@ PROMPT FIDELITY CONTRACT (mandatory):
 - The text between BEGIN USER PROMPT and END USER PROMPT is the finalized request for this one image.
 - Pass that text through unchanged. Do not rewrite, expand, optimize, beautify, summarize, translate, or add creative details.
 - Do not invent composition, lighting, style, colors, objects, materials, text, exclusions, or preservation rules.
-- Use routing metadata only to attach the correct files and apply constraints the user explicitly supplied.
+- Use routing metadata only to attach the correct files and apply constraints the user explicitly supplied.${
+    aspectSentence
+      ? `
+- Exception (mandatory): image_gen.imagegen has no size parameter, so the requested format can only travel in the prompt. The prompt you pass to imagegen must be the user prompt, then a blank line, then the OUTPUT FORMAT SENTENCE below, copied verbatim. Never drop, shorten, or paraphrase it.`
+      : ""
+  }
 
 BEGIN USER PROMPT
 ${options.prompt}
 END USER PROMPT
 
 Operation: ${options.mode}. ${modeInstruction}
-${routing.length ? `\n${routing.join("\n")}\n` : ""}
+${aspectSentence ? `\nOUTPUT FORMAT SENTENCE (append verbatim to the imagegen prompt):\n${aspectSentence}\n` : ""}${routing.length ? `\n${routing.join("\n")}\n` : ""}
 Use only the signed-in ChatGPT subscription path. Never use OPENAI_API_KEY, an Images API call, api.openai.com, or a separately billed fallback.
 Save exactly one final PNG to this path:
 ${options.output}
@@ -1074,15 +1113,69 @@ async function generateWithSubscription(options, auth) {
   }
 }
 
+// Measure the saved image against the requested format. Small misses are
+// center-cropped to the exact ratio (original kept beside it); large misses are
+// reported so the caller can tell the user instead of shipping a wrong format.
+async function enforceAspect(options, validation) {
+  const spec = options.aspect;
+  const verdict = evaluateAspect(validation.width, validation.height, spec);
+  const base = { status: verdict.status, actual: verdict.actualLabel, originalPath: null, note: null, revalidate: false };
+  if (verdict.status === "ambiguous") {
+    return { ...base, note: `The prompt names conflicting formats (${spec.label}); pass --aspect to choose one.` };
+  }
+  if (verdict.status === "mismatch") {
+    const lossText = verdict.loss ? ` Cropping would remove ${Math.round(verdict.loss * 100)}% of the image.` : "";
+    return {
+      ...base,
+      note: `Requested ${spec.label}, but the renderer returned ${verdict.actualLabel}.${lossText} The image was kept unchanged; tell the user and offer one new generation.`,
+    };
+  }
+  if (verdict.status !== "crop") return base;
+  if (options.aspectFit === "report") {
+    return { ...base, status: "mismatch_small", note: `Requested ${spec.label}, got ${verdict.actualLabel}; --aspect-fit report left it uncropped.` };
+  }
+  const bytes = await readFile(options.output);
+  let cropped;
+  try {
+    cropped = cropPngToAspect(bytes, verdict.cropWidth, verdict.cropHeight);
+  } catch (error) {
+    return { ...base, status: "mismatch", note: `Requested ${spec.label}, got ${verdict.actualLabel}; automatic crop failed: ${error.message}` };
+  }
+  const parsed = path.parse(options.output);
+  let originalPath = path.join(parsed.dir, `${parsed.name}.uncropped${parsed.ext}`);
+  for (let index = 2; await exists(originalPath); index += 1) {
+    originalPath = path.join(parsed.dir, `${parsed.name}.uncropped-${index}${parsed.ext}`);
+  }
+  await writeFile(originalPath, bytes, { flag: "wx" });
+  await writeFile(options.output, cropped);
+  return {
+    status: "cropped",
+    actual: `${verdict.cropWidth}x${verdict.cropHeight}`,
+    originalPath,
+    note: `Renderer returned ${verdict.actualLabel}; center-cropped to exact ${spec.label} (${Math.round(verdict.loss * 100)}% trimmed). Uncropped original kept.`,
+    revalidate: true,
+  };
+}
+
 async function executeGeneration(options, auth) {
   const runtimeRoute = await generateWithSubscription(options, auth);
-  const validation = await validateImage(options.output, {
+  let validation = await validateImage(options.output, {
     requireTransparency: /transparent|alpha/i.test(options.background),
   });
+  const aspect = await enforceAspect(options, validation);
+  if (aspect.revalidate) {
+    validation = await validateImage(options.output, {
+      requireTransparency: /transparent|alpha/i.test(options.background),
+    });
+  }
   return {
     ...imageRouteReceipt(options),
     ...runtimeRoute,
     auth_evidence: auth.evidence,
+    aspect_status: aspect.status,
+    aspect_actual: aspect.actual,
+    aspect_original_path: aspect.originalPath,
+    aspect_note: aspect.note,
     bytes: validation.bytes,
     format: validation.format,
     width: validation.width,
@@ -1744,6 +1837,9 @@ function imageRouteReceipt(options) {
     avoid: options.avoid,
     exact_text: options.exactText,
     requested_size: options.size,
+    requested_aspect: options.aspect ? options.aspect.label : "none",
+    requested_aspect_source: options.aspect ? options.aspect.source : null,
+    aspect_format_sentence: aspectFormatSentence(options.aspect),
     requested_quality: options.quality,
     requested_background: options.background,
     transparency_validation_required: /transparent|alpha/i.test(options.background),
@@ -1829,6 +1925,8 @@ function batchJobArgs(job, index, batchArgs) {
     "exact_text",
     "quality",
     "size",
+    "aspect",
+    "aspect_fit",
     "background",
     "timeout_seconds",
     "overwrite",
@@ -1881,6 +1979,8 @@ function batchJobArgs(job, index, batchArgs) {
       region: job.region,
       quality: job.quality,
       size: job.size,
+      aspect: job.aspect,
+      "aspect-fit": job.aspect_fit,
       background: job.background,
       "timeout-seconds": job.timeout_seconds ?? batchArgs["timeout-seconds"],
       "orchestrator-model": batchArgs["orchestrator-model"],
@@ -2010,6 +2110,11 @@ function printBatchResult(result, asJson) {
       const pathLabel = result.check_only ? "PLANNED_PATH" : "PATH";
       process.stdout.write(`${pathLabel}[${item.id}]=${item.path}\n`);
       if (!result.check_only) process.stdout.write(`MARKDOWN[${item.id}]=${item.markdown}\n`);
+      if (!result.check_only && item.requested_aspect && item.requested_aspect !== "none") {
+        process.stdout.write(`ASPECT_STATUS[${item.id}]=${item.aspect_status} (${item.requested_aspect} -> ${item.aspect_actual})\n`);
+        if (item.aspect_original_path) process.stdout.write(`ASPECT_ORIGINAL_PATH[${item.id}]=${item.aspect_original_path}\n`);
+        if (item.aspect_note) process.stdout.write(`ASPECT_NOTE[${item.id}]=${item.aspect_note}\n`);
+      }
     } else if (!item.ok) {
       const error = sanitizeText(item.error).replace(/\s+/g, " ").trim();
       process.stdout.write(`ERROR[${item.id}]=${error}\n`);
@@ -2121,6 +2226,13 @@ async function runGenerate(args) {
   } else {
     process.stdout.write(`PATH=${options.output}\n`);
     process.stdout.write(`MARKDOWN=${result.markdown}\n`);
+    if (options.aspect) {
+      process.stdout.write(`ASPECT_REQUESTED=${options.aspect.label}\n`);
+      process.stdout.write(`ASPECT_STATUS=${result.aspect_status}\n`);
+      process.stdout.write(`ASPECT_ACTUAL=${result.aspect_actual}\n`);
+      if (result.aspect_original_path) process.stdout.write(`ASPECT_ORIGINAL_PATH=${result.aspect_original_path}\n`);
+      if (result.aspect_note) process.stdout.write(`ASPECT_NOTE=${result.aspect_note}\n`);
+    }
   }
 }
 

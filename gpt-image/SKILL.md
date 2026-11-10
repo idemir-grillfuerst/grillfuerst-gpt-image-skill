@@ -111,6 +111,23 @@ node <skill-folder>/scripts/gpt_image.mjs generate \
   --out "generated-images/<transparent-name>.png"
 ```
 
+### Aspect ratio
+
+Codex's built-in `image_gen.imagegen` has no size parameter, so a ratio mentioned only inside the prompt is easy for the renderer to miss. Whenever the user expresses any format wish, pass it explicitly with `--aspect` while still keeping the prompt verbatim:
+
+- Numeric ratios and pixel sizes go through as given: `--aspect 16:9`, `--aspect 4:5`, `--aspect 1920x1080`.
+- Map words and platform names to a ratio: square/quadratisch `1:1`; widescreen/Breitbild/YouTube thumbnail/presentation slide `16:9`; Instagram/Facebook story, Reel, TikTok, Shorts, WhatsApp status `9:16`; Instagram feed portrait `4:5`; Pinterest pin `2:3`; link preview/Open Graph image `1.91:1`; classic photo `3:2` or `4:3`. Hochformat/Querformat without a number become `--aspect portrait` or `--aspect landscape`.
+- For an edit or variation without a format wish, omit `--aspect`: the runner keeps the edit target's format. Pass `--aspect` only when the user asks for a different format.
+- If the user names conflicting formats, ask which one before generating. `--aspect none` turns format handling off.
+
+The runner appends one fixed format sentence to the imagegen prompt, then measures the saved PNG. Read `ASPECT_STATUS` in the result:
+
+- `ok`: the format matches; say nothing extra.
+- `cropped`: the renderer missed slightly, so the runner center-cropped to the exact ratio and kept the original as `ASPECT_ORIGINAL_PATH`. Mention the trim in one short sentence.
+- `mismatch`: the renderer returned a clearly different format and the image was kept unchanged. Tell the user the actual size from `ASPECT_ACTUAL` and offer one new generation; never retry automatically.
+
+In a batch manifest, set `"aspect"` per job the same way.
+
 Use `--region`, `--preserve`, `--avoid`, `--exact-text`, `--size`, `--quality`, or `--background` only when the user explicitly supplied those details. The runner attaches the edit target first, then references in command-line order; strips API-related environment variables; verifies ChatGPT auth once; invokes built-in `$imagegen`; and saves a new PNG without overwriting by default.
 
 ## Generate multiple images
@@ -137,6 +154,7 @@ Report success when:
 - generation used subscription-native OpenAI/Codex `image_gen` or the ChatGPT-authenticated Codex bridge;
 - every requested reference was actually attached;
 - every output exists inside the workspace and has usable PNG bytes;
+- a requested format ended as `ASPECT_STATUS=ok` or `cropped`, or a `mismatch` was reported to the user;
 - the response contains each absolute path and inline image.
 
 Do not require SHA-256, a plan, a no-image setup check, a large receipt, or a separate visual-inspection gate for normal generation. Check real transparency only when the user explicitly requests transparent output. Never star the repository automatically; request a Star politely only after a successful result.
