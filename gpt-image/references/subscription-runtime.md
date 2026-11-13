@@ -8,7 +8,7 @@ Read this reference only for installation, authentication, backend diagnosis, or
 Agent Skill
   -> subscription-native OpenAI/Codex image_gen when available, otherwise installed Codex CLI
   -> Sign in with ChatGPT
-  -> codex exec (runtime-selected Codex model, Low reasoning by default)
+  -> codex exec (runtime-selected Codex model, Medium reasoning by default)
   -> built-in $imagegen / image_gen (underlying renderer unpinned)
   -> workspace PNG
   -> absolute Markdown preview
@@ -30,17 +30,17 @@ Google Antigravity exposes its own provider-native `generate_image` tool, but th
 
 The Codex model running `codex exec` is an **orchestrator**. It reads the deterministic bridge instruction, attaches the supplied files, and calls `$imagegen`. The built-in image-generation service renders the pixels. The outer model can affect tool routing and instruction following, but selecting a larger orchestrator does not replace the built-in renderer; the bridge reduces routing risk by forwarding a finalized prompt unchanged and making attachment order explicit.
 
-Model names and account availability change over time, so the runner embeds no Codex model catalog and pins no default model ID. The default `--orchestrator-model auto` policy:
+The Grillfürst version pins `gpt-6.1-sol` as default orchestrator (tested internally) and embeds no model catalog. The default policy:
 
-1. Omits `codex exec -m`, allowing Codex to select a current model available to the signed-in ChatGPT account.
-2. Adds `model_reasoning_effort="low"` because OpenAI describes Low in the CLI (Light in the app) as suitable for quick, well-scoped tasks.
+1. Passes `codex exec -m gpt-6.1-sol`; with `--orchestrator-model auto` it omits `-m` so Codex selects a current model available to the signed-in ChatGPT account.
+2. Adds `model_reasoning_effort="medium"` (Grillfürst default) for more reliable instruction following.
 3. Starts the image task immediately, with no model-list query, discovery turn, fallback turn, or automatic retry.
 
-`--orchestrator-model account-default` omits both model and reasoning overrides. An advanced caller may pass any current Codex model ID plus `--orchestrator-effort <current-level>`; the CLI, not this repository, validates current availability. Explicit model IDs are never invented by the skill and are used only when the user requests one.
+`--orchestrator-model account-default` omits both model and reasoning overrides. An advanced caller may pass any current Codex model ID plus `--orchestrator-effort <current-level>`; the CLI, not this repository, validates current availability. Apart from the Grillfürst default, explicit model IDs are never invented by the skill and are used only when the user requests one.
 
 The image renderer follows the same future-proofing rule. Although current official documentation names `gpt-image-2`, the bridge calls built-in `$imagegen` rather than pinning an underlying renderer model in its runtime contract.
 
-Codex is included in ChatGPT Free, but the current official pricing documentation separately states that **image generation is not available on the Free plan**. Low reasoning can make an eligible bridge turn lighter; it cannot grant image entitlement. This skill reports that boundary and never switches to an API-key route.
+Codex is included in ChatGPT Free, but the current official pricing documentation separately states that **image generation is not available on the Free plan**. The reasoning level cannot grant image entitlement. This skill reports that boundary and never switches to an API-key route.
 
 Official references:
 

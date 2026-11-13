@@ -45,7 +45,10 @@ const MAX_CAPTURE_BYTES = 24 * 1024 * 1024;
 const CONTRACT_VERSION = 7;
 const DEFAULT_BATCH_CONCURRENCY = 2;
 const MAX_BATCH_CONCURRENCY = 4;
-const DEFAULT_ORCHESTRATOR_EFFORT = "low";
+// Grillfuerst default: gpt-6.1-sol was tested and routes $imagegen reliably.
+// Override per call with --orchestrator-model auto|account-default|<model-id>.
+const DEFAULT_ORCHESTRATOR_MODEL = "gpt-6.1-sol";
+const DEFAULT_ORCHESTRATOR_EFFORT = "medium";
 const ORCHESTRATOR_MODEL_POLICIES = new Set(["auto", "account-default"]);
 const IMAGE_MODES = new Set(["auto", "generate", "edit", "variation"]);
 const REPEATABLE_FLAGS = new Set([
@@ -151,8 +154,8 @@ Plan and generate options:
   --aspect-fit MODE       crop (default): center-crop small misses to the exact ratio
                           and keep the original; report: only measure and report.
   --background TEXT       Explicit output constraint, e.g. transparent or opaque.
-  --orchestrator-model M  auto, account-default, or a current Codex model ID. Default: auto.
-  --orchestrator-effort E Codex reasoning level. Auto policy default: low.
+  --orchestrator-model M  auto, account-default, or a current Codex model ID. Default: gpt-6.1-sol.
+  --orchestrator-effort E Codex reasoning level. Default: medium.
   --timeout-seconds N     Default: ${DEFAULT_TIMEOUT_MS / 1000}
   --overwrite             Replace the exact output path.
   --dry-run               Generate only: check sign-in and paths without creating an image.
@@ -165,8 +168,8 @@ Batch options:
   --check-only            Validate and summarize the batch without sign-in or generation.
   --cwd PATH              Workspace root. Defaults to the current directory.
   --timeout-seconds N     Default timeout for each job.
-  --orchestrator-model M  Apply one model policy to every job. Default: auto.
-  --orchestrator-effort E Apply one reasoning level to every job. Auto policy default: low.
+  --orchestrator-model M  Apply one model policy to every job. Default: gpt-6.1-sol.
+  --orchestrator-effort E Apply one reasoning level to every job. Default: medium.
   --overwrite             Allow every job to replace its exact output path.
   --verbose               Show sanitized Codex bridge output from each job.
   --json                  Print machine-readable output.
@@ -176,7 +179,7 @@ Each finalized image prompt is forwarded unchanged; attachment labels are routin
 Planning and the no-image setup check are optional troubleshooting tools, not generation prerequisites.
 Batch performs one ChatGPT-auth check, then runs every job whose inputs already exist. Jobs may share references; output-dependent edits stay sequential.
 Each job prompt must describe one image. Keep ordering in job IDs and output paths, not in phrases such as "the first of five."
-The default CLI bridge does not pin a model name. Codex selects a current model available to the signed-in account, while the runner requests ${DEFAULT_ORCHESTRATOR_EFFORT} reasoning (Light in the app, Low in the CLI).
+The Grillfuerst default pins ${DEFAULT_ORCHESTRATOR_MODEL} as orchestrator and requests ${DEFAULT_ORCHESTRATOR_EFFORT} reasoning (Medium in app and CLI). Use --orchestrator-model auto to let Codex select the model instead.
 The built-in image-generation route is also unpinned so OpenAI can update its renderer. The runner never retries an image-generation, usage-limit, or Free-plan failure.
 
 Runtime:
@@ -640,7 +643,7 @@ function gettingStartedGuide() {
       revision: "/gpt-image Edit the last image: change only the jacket to red.",
       transparent: "Use the gpt-image skill to create a flat blue robot app icon with a transparent background, 1:1, high quality.",
     },
-    runtime_note: "The CLI bridge pins no model ID; Codex selects a current account-available model and the runner requests Low reasoning.",
+    runtime_note: `The CLI bridge uses ${DEFAULT_ORCHESTRATOR_MODEL} at Medium reasoning (Grillfuerst default); --orchestrator-model auto lets Codex choose.`,
     eligibility_note: "Setup verifies installation and ChatGPT sign-in, not image entitlement. Check current official Codex plan policy; this skill does not bypass plan restrictions.",
     note: "Ratios and quality phrases are natural-language requests, not fixed API presets. Exact pixel dimensions may vary with built-in image generation.",
   };
@@ -787,7 +790,7 @@ function assertKnownImageOptions(args) {
 }
 
 function normalizeOrchestratorOptions(args) {
-  const requested = String(args["orchestrator-model"] || "auto").trim();
+  const requested = String(args["orchestrator-model"] || DEFAULT_ORCHESTRATOR_MODEL).trim();
   if (!requested) throw new CliError("--orchestrator-model must not be empty.", 2);
 
   const effort = String(args["orchestrator-effort"] || DEFAULT_ORCHESTRATOR_EFFORT).toLowerCase();
@@ -1656,12 +1659,12 @@ function capabilityReport() {
     model_routing: {
       renderer_route: "Codex built-in image_gen",
       renderer_model_pinned: false,
-      cli_orchestrator_policy: "auto",
-      primary_orchestrator_model: "Codex-selected current model available to the signed-in account",
-      orchestrator_model_pinned: false,
+      cli_orchestrator_policy: "explicit",
+      primary_orchestrator_model: DEFAULT_ORCHESTRATOR_MODEL,
+      orchestrator_model_pinned: true,
       primary_reasoning_effort: DEFAULT_ORCHESTRATOR_EFFORT,
-      app_reasoning_label: "Light",
-      cli_reasoning_label: "Low",
+      app_reasoning_label: "Medium",
+      cli_reasoning_label: "Medium",
       model_catalog_embedded: false,
       model_catalog_behavior: "Current Codex availability is resolved at runtime.",
       visual_quality_boundary: "The orchestrator calls image_gen; the built-in renderer produces the image pixels.",

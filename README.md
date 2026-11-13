@@ -16,6 +16,17 @@ install skill → Sign in with ChatGPT → direct prompt or delegated concept pr
 
 ![GPT Image Skill reference edit smoke test](./generated-images/reference-edit-smoke.png)
 
+## Grillfürst: Installation für Kollegen
+
+Dem eigenen Agenten (Codex, ChatGPT, Claude Code) einfach sagen:
+
+```text
+Installiere mir den GPT Image Skill nach dieser Anleitung:
+https://github.com/idemir-grillfuerst/grillfuerst-gpt-image-skill/blob/grillfuerst/INSTALL-GRILLFUERST.md
+```
+
+Voreinstellung: Modell `gpt-6.1-sol`, Denkstufe medium. Details in [INSTALL-GRILLFUERST.md](./INSTALL-GRILLFUERST.md).
+
 ## Install by pasting one prompt into an agent
 
 Paste this into Codex, Claude Code, Google Antigravity, or another local coding agent:
@@ -61,7 +72,7 @@ $gpt-image Create a cozy reading room at sunset, 16:9, high quality.
 /gpt-image Use @references/character.png as the character reference and place it in a rainy city, 9:16, high quality.
 Use the gpt-image skill to create a flat blue robot app icon with a transparent background, 1:1, high quality.
 
-CLI model policy: no model ID is pinned; Codex selects a current account-available model at Low reasoning.
+CLI model policy: gpt-6.1-sol at Medium reasoning (Grillfürst default); --orchestrator-model auto lets Codex choose.
 Plan note: setup verifies sign-in, not image entitlement. Current Codex pricing excludes image generation from Free.
 ```
 
@@ -94,26 +105,26 @@ Each bridge invocation is ephemeral. For “change the result you just made,” 
 The default path is:
 
 ```text
-quick ChatGPT-auth check → current account-available Codex model at Low reasoning
+quick ChatGPT-auth check → gpt-6.1-sol at Medium reasoning
                          → built-in image generation → minimal PNG sanity check
                          → PATH + inline Markdown
 ```
 
 Planning, the setup check that does not create an image (`--dry-run`), `capabilities --json`, `inspect --input`, and detailed JSON remain available for troubleshooting. They are not required before a normal image request.
 
-### 5. The model stays current; reasoning stays light
+### 5. Fixed tested model at Medium reasoning
 
-Codex model names and availability change over time. The default CLI bridge therefore does **not** pin Luna, Sol, Terra, or any other model ID and does not embed a model catalog. Codex selects a current model available to the signed-in account, while the runner requests **Low** reasoning—the CLI name for **Light** in the ChatGPT app. The selected Codex model receives a finalized, tightly scoped instruction and calls `$imagegen`.
+Grillfürst version: the default CLI bridge pins `gpt-6.1-sol`, which was tested internally for reliable `$imagegen` routing, and does not embed a model catalog. If an account cannot use it, `--orchestrator-model auto` lets Codex select a current model. The runner requests **Medium** reasoning. The selected Codex model receives a finalized, tightly scoped instruction and calls `$imagegen`.
 
 The image renderer is not pinned either. OpenAI currently documents Codex's built-in renderer as `gpt-image-2`, but this repository invokes the built-in image-generation capability by name so OpenAI can update the underlying renderer without a skill release. The outer Codex model can affect tool routing and instruction following, but it does not replace the built-in renderer or directly set its visual rendering quality.
 
-The default `auto` policy is intentionally small:
+The default policy is intentionally small:
 
-1. Let Codex select a current model available to the signed-in account.
-2. Request Low reasoning for the deterministic bridge task.
+1. Use `gpt-6.1-sol` (or, with `--orchestrator-model auto`, let Codex select a current model).
+2. Request Medium reasoning for the bridge task.
 3. Run no model-discovery preflight, fallback turn, or automatic image-generation retry.
 
-`--orchestrator-model account-default` removes even the Low override and leaves both model and reasoning to Codex. A current model ID can still be pinned as an advanced, explicit user choice; the runner accepts the ID without maintaining its own allowlist.
+`--orchestrator-model account-default` removes even the reasoning override and leaves both model and reasoning to Codex. A current model ID can still be pinned as an advanced, explicit user choice; the runner accepts the ID without maintaining its own allowlist.
 
 This policy lowers bridge overhead on supported plans, but it cannot make image generation available on ChatGPT Free. Codex itself is included in Free, while the official pricing page separately says image generation is unavailable there. See [Codex models](https://learn.chatgpt.com/docs/models), [Codex image generation](https://learn.chatgpt.com/docs/image-generation), and [Codex pricing](https://learn.chatgpt.com/docs/pricing).
 
@@ -126,7 +137,7 @@ This policy lowers bridge overhead on supported plans, but it cannot make image 
 - Uses Codex's built-in `$imagegen` under **Sign in with ChatGPT**
 - Uses a host-native OpenAI/Codex `image_gen` tool directly only when it is backed by included ChatGPT/Codex usage
 - Blocks `OPENAI_API_KEY`, API-key Codex login, and Images API fallback
-- Leaves the default Codex model unpinned and requests Low reasoning for the deterministic CLI bridge
+- Pins `gpt-6.1-sol` and requests Medium reasoning for the CLI bridge
 - Installs the same `gpt-image` skill for Codex, Claude Code, and Google Antigravity
 - Preserves direct prompts verbatim and honors delegated multi-concept design work
 - Supports one or multiple references with deterministic attachment order
@@ -150,7 +161,7 @@ This policy lowers bridge overhead on supported plans, but it cannot make image 
 | Same design, different styles | Repeat `--mode variation --edit-target SAME_PATH` in a batch |
 | Same identity, different scenes | Repeat `--mode generate --reference SAME_PATH` in a batch |
 | Different designs in parallel | Give each batch job its own prompt and references |
-| CLI model routing | Default `auto` = current account-available Codex model at Low reasoning |
+| CLI model routing | Default `gpt-6.1-sol` at Medium reasoning |
 
 The edit target is Image 1. Supporting references follow in command-line order.
 
@@ -270,7 +281,7 @@ node ./gpt-image/scripts/gpt_image.mjs generate \
   --out "generated-images/glass-robot.png"
 ```
 
-The command above uses the default `auto` policy: Codex selects a current model available to the signed-in account, while the runner requests Low reasoning. No model catalog, model discovery, fallback, or extra diagnostic turn is involved. To leave both the model and reasoning effort entirely at Codex defaults:
+The command above uses the default: `gpt-6.1-sol` at Medium reasoning. No model catalog, model discovery, fallback, or extra diagnostic turn is involved. To leave both the model and reasoning effort entirely at Codex defaults:
 
 ```bash
 node ./gpt-image/scripts/gpt_image.mjs generate \
@@ -445,7 +456,7 @@ node ./gpt-image/scripts/gpt_image.mjs verify-installers --json
 - Removes `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`, and `CODEX_ACCESS_TOKEN` from Codex child processes.
 - Blocks generation unless redacted diagnostics establish ChatGPT authentication.
 - Calls `codex login status` once on the normal generation path; Codex Doctor is used only for explicit or ambiguous diagnosis.
-- Leaves the Codex model and built-in renderer unpinned; default `auto` requests only CLI Low reasoning from the current account-available model.
+- Pins `gpt-6.1-sol` as Codex orchestrator at Medium reasoning (Grillfürst default); the built-in renderer stays unpinned.
 - Checks authentication once for a live batch, not once per job; no diagnostic command runs per job.
 - Contains no OpenAI Images API endpoint or `/v1/images` request.
 - Never reads auth files and never writes the generated image outside the active workspace.
@@ -461,7 +472,7 @@ node ./gpt-image/scripts/gpt_image.mjs verify-installers --json
 - [x] Transparent-background routing plus PNG alpha/transparency validation on the bridge path
 - [x] Last-output-as-edit-target contract for follow-up revisions
 - [x] Direct generation by default; planning, no-image setup checks, and detailed receipts are optional
-- [x] Unpinned, runtime-selected Codex model with Low bridge reasoning, no embedded model catalog, and no Free-plan bypass
+- [x] Tested default Codex model `gpt-6.1-sol` with Medium bridge reasoning, no embedded model catalog, and no Free-plan bypass
 - [x] Shared-anchor variations and independent concepts use bounded parallel batches; one auth check and zero diagnostic gates per job
 - [x] One-time, user-language getting-started guide with ratio and quality examples
 - [x] Minimal output validation without generated-image hashes

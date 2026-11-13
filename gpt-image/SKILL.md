@@ -65,7 +65,7 @@ Use `doctor --json` for diagnosis. Follow its `next_action`; never improvise an 
 
 Run the requested generation directly. Do not run `doctor`, `plan`, `inspect`, `capabilities`, or the no-image setup check (`--dry-run`) first unless the user asks or a real error needs diagnosis.
 
-The runner's default `auto` policy does not pin a Codex model name or embed a model list. It lets Codex select a current model available to the signed-in account and requests CLI `low` reasoning (Light in the app) for the already-finalized `$imagegen` routing task. The built-in image renderer is also unpinned so service updates do not require a skill edit. Do not pin or raise the orchestrator model merely to improve visual rendering quality. The runner must not run model discovery, a fallback turn, an image-generation retry, or a retry for usage-limit or plan restrictions. Never promise that lower reasoning unlocks a restricted plan; check current official Codex pricing when eligibility matters, and never route around a restriction with an API.
+The Grillfürst default pins `gpt-6.1-sol` as orchestrator model (tested internally) and requests `medium` reasoning for the already-finalized `$imagegen` routing task. If the account cannot use that model, pass `--orchestrator-model auto` so Codex selects a current model. The built-in image renderer is also unpinned so service updates do not require a skill edit. Do not raise the orchestrator model merely to improve visual rendering quality. The runner must not run model discovery, a fallback turn, an image-generation retry, or a retry for usage-limit or plan restrictions. Never promise that lower reasoning unlocks a restricted plan; check current official Codex pricing when eligibility matters, and never route around a restriction with an API.
 
 ```bash
 node <skill-folder>/scripts/gpt_image.mjs generate \
@@ -73,7 +73,7 @@ node <skill-folder>/scripts/gpt_image.mjs generate \
   --out "generated-images/<descriptive-name>.png"
 ```
 
-Use the default model policy unless the user explicitly asks otherwise. `--orchestrator-model account-default` leaves both model and reasoning at Codex defaults. An explicit current model ID may be paired with `--orchestrator-effort <current-level>`; do not maintain or infer a model allowlist inside the skill.
+Use the default model (`gpt-6.1-sol`) unless the user explicitly asks otherwise or Codex reports the model as unavailable; then retry once with `--orchestrator-model auto`. `--orchestrator-model account-default` leaves both model and reasoning at Codex defaults. An explicit current model ID may be paired with `--orchestrator-effort <current-level>`; do not maintain or infer a model allowlist inside the skill.
 
 For reference-guided generation, repeat `--reference`. Add `--reference-role` only when the user states a relationship that is not already clear in the prompt.
 
